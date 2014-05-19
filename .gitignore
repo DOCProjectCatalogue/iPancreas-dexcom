@@ -1,5 +1,6 @@
 .DS_Store
 *.pyc
 device-data.json
-example_output.csv
+example-output.*
+example_output.*
 my_example.py
