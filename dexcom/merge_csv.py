@@ -1,4 +1,4 @@
-# usage: merge_csv.py [-h] [-c] [-d] [-o OUTPUT_FILE] [-p DIR_PATH] [-t]
+# usage: merge_csv.py [-h] [-c] [-d] [-o OUTPUT_FILE] [-p DIR_PATH] [-s] [-t]
 #
 # Merge a set of Dexcom .csv exports (from Dexcom Studio) into one .csv file.
 #
@@ -11,6 +11,7 @@
 #   -p DIR_PATH, --path DIR_PATH
 #                         path to the directory where all your Dexcom Studio
 #                         .csv exports are stored
+#   -s, --serial-number   include a column for device serial number
 #   -t, --terse           output only glucose and timestamps columns
 #
 # Copyright (c) 2014, Jana E. Beck
@@ -33,6 +34,8 @@ class DexcomSet:
     self.set = set([])
 
     self.files = files
+
+    self.serials = []
 
     # only used for terminal logging
     self.total_so_far = 0
@@ -80,6 +83,8 @@ class DexcomSet:
       # if adding device generation info is desire, append it to saved rows
       if this_file['add_generation_info']:
         item.append(generation)
+      if this_file['add_sn_info']:
+        item.append(this_SN)
       # set uses a hash internally and hash keys must be immutable types
       # i.e., tuple, not list
       self.set.add(tuple(item))
@@ -115,6 +120,9 @@ class DexcomSet:
         elif len(header) == 7:
           # device gen is in very last column
           to_write = list(item)[2:8] + [list(item)[-1]]
+        elif len(header) == 8:
+          # serial number is in very last column
+          to_write = list(item)[2:8] + list(item)[-2:]
         else:
           to_write = list(item)
         wrtr.writerow(to_write)
@@ -166,6 +174,7 @@ def process(args):
   # set new header if output format is 'terse'
   if args['terse']:
     header = ['GlucoseInternalTime', 'GlucoseDisplayTime', 'GlucoseValue', 'MeterInternalTime', 'MeterDisplayTime', 'MeterValue']
+
   else:
     try:
       header = get_header(files[0])
@@ -178,13 +187,19 @@ def process(args):
   # append a column label for device generation if desired in output
   if args['device_gen']:
     header.append('DeviceGeneration')
-
+  if args['serial']:
+    header.append('SerialNumber')
   # create a DexcomSet instance to merge records
+  print()
   print('### Merging the following files:')
   [print(f) for f in files]
   print()
 
-  dex = DexcomSet([{'add_generation_info': args['device_gen'], 'file': f} for f in files])
+  dex = DexcomSet([{
+    'add_generation_info': args['device_gen'],
+    'add_sn_info': args['serial'],
+    'file': f
+  } for f in files])
 
   # set the delimiter to csv if desired; default is tab
   delimiter = ',' if args['csv'] else '\t'
@@ -203,9 +218,14 @@ def main():
   parser.add_argument('-d', '--device-gen', action='store_true', dest='device_gen', help='include a column for device generation information')
   parser.add_argument('-o', '--output-file', action='store', dest="output_file", help='path and/or name of output file')
   parser.add_argument('-p', '--path', action='store', dest="dir_path", help='path to the directory where all your Dexcom Studio .csv exports are stored')
+  parser.add_argument('-s', '--serial-number', action='store_true', dest='serial', help='include a column for device serial number')
   parser.add_argument('-t', '--terse', action='store_true', help='output only glucose and timestamps columns')
 
   args = parser.parse_args()
+
+  # force adding of device gen info when adding serial, to keep things simpler
+  if args.serial:
+    args.device_gen = True
 
   process(args.__dict__)
 
