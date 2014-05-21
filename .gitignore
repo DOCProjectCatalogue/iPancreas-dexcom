@@ -1,5 +1,6 @@
 .DS_Store
 *.pyc
+bloodhound.log
 device-data.json
 example-output.*
 example_output.*
