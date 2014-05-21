@@ -3,6 +3,11 @@
 # License: GPLv3 (http://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import print_function
+# because raw_input got renamed in Python 3.something
+try:
+  input = raw_input
+except NameError:
+  pass
 
 import csv
 from datetime import datetime as dt, timedelta as td, tzinfo
@@ -11,7 +16,9 @@ from pytz import timezone as tz, UnknownTimeZoneError
 import pytz
 import uuid
 
-DT_FORMAT = '%Y-%m-%d %H:%M:%S'
+DEX_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+SECONDS_IN_HOUR = 3600
 
 class DexcomTZ(tzinfo):
 
@@ -29,18 +36,19 @@ def datetime_difference(d1, d2):
 def enlighten_datetime(obj):
   """Make a Dexcom object timezone-aware with utc_time and display_time attributes."""
 
-  obj.utc_time = pytz.utc.localize(parse_datetime(obj.internal_time) - td(hours=obj.internal_offset)).isoformat()
   obj.display_time = parse_datetime(obj.user_time).replace(tzinfo=DexcomTZ(obj.display_offset)).isoformat()
+  current_tz = tz(obj.timezone)
+  obj.utc_time = current_tz.localize(parse_datetime(obj.user_time)).astimezone(pytz.utc).isoformat()
 
 def parse_datetime(dt_str):
   """Parse a Dexcom time and date string into a datetime object."""
 
   try:
-    return dt.strptime(dt_str, DT_FORMAT)
+    return dt.strptime(dt_str, DEX_FORMAT)
   except ValueError:
     # gen 'SevenPlus' date and time info includes milliseconds
     # so we truncate to index -4
-    return dt.strptime(dt_str[:-4], DT_FORMAT)
+    return dt.strptime(dt_str[:-4], DEX_FORMAT)
 
 class Dexcom:
   # NB: despite what one might think, this doesn't actually want to be a general CGM data model
@@ -64,8 +72,8 @@ class Dexcom:
     """Return the integer value for each possible Dexcom sensor reading."""
     try:
       value = int(value)
-      # calibrations can go below 40
-      if value >= 20 and value <= 400:
+      # calibrations can go below 40 and over 400
+      if value >= 20 and value <= 600:
         return value
       else:
         raise Exception('Dexcom value out of range:', value)
@@ -81,7 +89,7 @@ class Dexcom:
     return {
       'id': str(uuid.uuid4()),
       'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
-      'timezoneAwareTime': self.display_time,
+      'offsetTime': self.display_time,
       'trueUtcTime': self.utc_time,
       'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
       'value': self.value
@@ -107,7 +115,7 @@ class DexcomCalibration(Dexcom):
 class DexcomJSON:
   """Convert input 'terse' CSV to JSON."""
 
-  def __init__(self, csv_file, output_opts, offsets = {}):
+  def __init__(self, csv_file, output_opts):
     """Parse input CSV file into appropriate Dexcom objects."""
 
     self.output = output_opts
@@ -122,12 +130,9 @@ class DexcomJSON:
     # make sure all is sorted!
     self.all.sort(key=lambda x: x.internal_time, reverse=True)
 
-    if not offsets:
-      self.offsets = {'SevenPlus': 0}
-    else:
-      self.offsets = offsets
+    self.offsets = {'SevenPlus': 0}
 
-    self.timezone_changes = []
+    self.offset_changes = []
 
   def sensors(self):
     """Return all and only sensor readings."""
@@ -139,52 +144,48 @@ class DexcomJSON:
 
     return [i for i in self.all if i.subtype == 'calibration']
 
-  def _add_timezone_change(self, diff_in_hours, obj, change_type, start = False):
+  def _add_offset_change(self, diff_in_hours, obj, change_type, start = False):
     """Add a timezone change to the list."""
 
-    try:
-      offset = self.offsets[obj.serial]
-    except KeyError:
-      if obj.device_gen == 'SevenPlus':
-        offset = self.offsets[obj.device_gen]
-      else:
-        offset = self._get_g4_offset(obj)
-        if not offset:
-          return
-
-    self.timezone_changes.append({
-      # timestamp of last (most recent) datum to which this offset is to be applied
-      'datetime': obj.internal_time if start else '',
-      'display_offset': diff_in_hours + offset,
-      'internal_offset': offset,
-      'type': change_type
-    })
-
-    return (offset, diff_in_hours + offset)
-
-  def _get_g4_offset(self, obj):
-    """Ask the user to input an offset for a particular Dexcom G4 Platinum CGM device."""
-
-    if not obj.serial:
-      print('Unknown serial number! Cannot proceed with bloodhound protocol.')
-      print()
+    offsets = self._get_timezone(obj, change_type)
+    offset = offsets[1] - diff_in_hours
+    timezone = offsets[0]
+    change_type = offsets[2]
+    if offset is None:
       return
 
-    print('The G4 Platinum does not have a consistent internal timestamp offset from UTC.')
-    print('The serial number of this device is', obj.serial)
-    print('Here is the first internal timestamp from this device:', obj.internal_time)
-    print('And here is the display time:', obj.user_time)
-    print()
-    # because raw_input got renamed in Python 3.something
-    try:
-      input = raw_input
-    except NameError:
-      pass
-    res = input('Please enter the offset of the display time from UTC as an integer value: ')
-    self.offsets[obj.serial] = int(res)
+    self.offset_changes.append({
+      # timestamp of last (most recent) datum to which this offset is to be applied
+      'internal_time': obj.internal_time if start else '',
+      'display_time': obj.user_time,
+      'display_offset': diff_in_hours + offset,
+      'internal_offset': offset,
+      'type': change_type,
+      'timezone': timezone
+    })
 
-    # also return the value
-    return int(res)
+    return (offset, diff_in_hours + offset, timezone)
+
+  def _get_timezone(self, obj, change_type):
+    """Ask the user to input an offset for a particular Dexcom G4 Platinum CGM device."""
+
+    res = input('What timezone were you in at %s? ' %(obj.user_time))
+    dst = input('Do you think this was a shift to/from DST? (y/n) ')
+    td_offset = tz(res).utcoffset(parse_datetime(obj.user_time))
+    offset = td_offset.days * 24 + td_offset.seconds/SECONDS_IN_HOUR
+    timezone = res
+    if dst == 'y':
+      change_type += '; shift to/from DST'
+      # fall back is -1; reverse it to undo change
+      if parse_datetime(obj.user_time).month > 6:
+        offset += 1
+      # spring forward is +1; reverse it to undo change
+      else:
+        offset -= 1
+
+    print('Offset from UTC is %d.' %offset)
+    print()
+    return (timezone, offset, change_type)
 
   def _parse_row(self, row):
     """Parse a CSV row into DexcomSensor and DexcomCalibration readings as appropriate."""
@@ -232,15 +233,6 @@ class DexcomJSON:
   def bloodhound(self, tz_str):
     """Sniff out changes to Dexcom time and date settings."""
 
-    SECONDS_IN_HOUR = 3600
-
-    try:
-      most_recent_timezone = tz(tz_str)
-    except UnknownTimeZoneError:
-      print('Unknown timezone! Cannot proceed with bloodhound protocol.')
-      print()
-      return
-
     initial_difference = ''
 
     for obj in self.all:
@@ -256,34 +248,48 @@ class DexcomJSON:
 
       # bootstrap from most recent data known timezone and difference to internal timestamp offset from UTC
       if not initial_difference:
-        offsets = self._add_timezone_change(diff['hours'], obj, 'input by user')
+        offsets = self._add_offset_change(diff['hours'], obj, 'input by user')
         initial_difference = diff
         current_difference = initial_difference
       # offset from UTC of internal timestamps isn't consistent across G4 receivers
       elif obj.serial != last_obj.serial and obj.device_gen == 'G4Platinum':
-        offsets = self._add_timezone_change(diff['hours'], obj, 'changed G4 Platinum device', True)
+        offsets = self._add_offset_change(diff['hours'], obj, 'changed G4 Platinum device', True)
         current_difference = diff
       # offset from UTC of internal timestamps isn't consistent across device generations
       elif obj.device_gen != last_obj.device_gen:
-        offsets = self._add_timezone_change(diff['hours'], obj, 'changed to Seven Plus device', True)
+        offsets = self._add_offset_change(diff['hours'], obj, 'changed to Seven Plus device', True)
         current_difference = diff
       # and sometimes the user actually changed the device's settings
       # fancy that!
       elif diff['hours'] != current_difference['hours'] \
           and abs(diff['timedelta'].seconds - current_difference['timedelta'].seconds) > 60:
-        offsets = self._add_timezone_change(diff['hours'], obj, 'inferred via bloodhound protocol', True)
+        offsets = self._add_offset_change(diff['hours'], obj, 'inferred via bloodhound protocol', True)
         current_difference = diff
 
       # add offsets to Dexcom object
       if offsets:
         obj.internal_offset = offsets[0]
         obj.display_offset = offsets[1]
+        obj.timezone = offsets[2]
         # make each Dexcom object timezone-aware
         enlighten_datetime(obj)
 
       last_obj = obj
 
+    with open('bloodhound.log', 'w') as f:
+      [print(self._printable_timezone_change(change), file=f) for change in self.offset_changes]
+
     return self
+
+  def _printable_timezone_change(self, change):
+    """Return a multiline string reflecting a timezone change in human-readable format for printing."""
+
+    return """Offset effective at internal time %s, display time %s:
+\tDisplay offset from UTC = %d
+\tInternal offset from UTC = %d
+\tTimezone = %s
+\tType of change = %s\n""" %('(most recent)' if not change['internal_time'] else change['internal_time'],
+  change['display_time'], change['display_offset'], change['internal_offset'], change['timezone'], change['type'])
 
   def print_JSON(self):
     """Print as JSON to specified output file in specified format."""
@@ -294,3 +300,5 @@ class DexcomJSON:
 
     with open(self.output['file'], 'w') as f:
       print(json.dumps(to_print, separators=(',', ': '), indent=2), file=f)
+
+    return self
