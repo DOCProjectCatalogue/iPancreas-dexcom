@@ -83,14 +83,25 @@ class Dexcom:
       elif value == 'High':
         return 401
 
-  def as_tidepool(self):
+  def as_iPancreas(self):
     """Return a dict of the object conforming to Tidepool's data model."""
 
     return {
       'id': str(uuid.uuid4()),
       'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
       'offsetTime': self.display_time,
+      'timezone': self.timezone,
       'trueUtcTime': self.utc_time,
+      'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
+      'value': self.value
+    }
+
+  def as_tidepool(self):
+    """Return a dict of the object conforming to Tidepool's data model."""
+
+    return {
+      'id': str(uuid.uuid4()),
+      'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
       'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
       'value': self.value
     }
@@ -295,7 +306,8 @@ class DexcomJSON:
     """Print as JSON to specified output file in specified format."""
 
     to_print = {
-      'tidepool': [obj.as_tidepool() for obj in self.all]
+      'tidepool': [obj.as_tidepool() for obj in self.all],
+      'iPancreas': [obj.as_iPancreas() for obj in self.all]
     }[self.output['format']]
 
     with open(self.output['file'], 'w') as f:
