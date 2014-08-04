@@ -7,7 +7,9 @@ Utilities for data from a Dexcom continuous glucose monitor.
 
 This is the repository where I'm moving all my utilities (previously found in my repository now known as [iPancreas-archive](https://github.com/jebeck/iPancreas-archive)) for dealing with the data from a Dexcom continuous glucose monitor. The eventual goal is a Python module (located in `dexcom/`) containing everything I use to read, munge, and analyze my own Dexcom data, from soup to nuts (i.e., from reading the raw Dexcom Studio output to final JSON). Perhaps I'll even add the package to `pip` eventually...
 
-As of May 15th, 2014, I haven't started moving utilities from iPancreas-archive, but I have added a tool `merge_csv.py` (originally from [a gist of mine](https://gist.github.com/jebeck/11167866)) for merging any number of Dexcom Studio export files into a single Dexcom Studio or "terse"-formatted file without duplicates. Comments at the top of this file provide its documentation.
+As of August 3rd, 2014, I have reimplemented iPancreas-archive's `dexcom_to_JSON.py` tool as `convert_to_JSON.py`, now including tooling for specifiying the timezone associated with segments of a dataset (whenever the date and time settings on the device appear to have changed) given an input timezone corresponding to the timezone of the most recent data.
+
+In May 2014, I added a tool `merge_csv.py` (originally from [a gist of mine](https://gist.github.com/jebeck/11167866)) for merging any number of Dexcom Studio export files into a single Dexcom Studio or "terse"-formatted file without duplicates. Comments at the top of this file provide its documentation.
 
 The file `example.py` provides usage examples for all of the components of the package.
 
