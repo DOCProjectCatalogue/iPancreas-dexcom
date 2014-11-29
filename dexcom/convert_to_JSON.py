@@ -90,10 +90,11 @@ class Dexcom:
       'id': str(uuid.uuid4()),
       'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
       'offsetTime': self.display_time,
+      'source': 'dexcom',
+      'subtype': self.subtype,
       'timezone': self.timezone,
       'trueUtcTime': self.utc_time,
       'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
-      'subtype': self.subtype,
       'value': self.value
     }
 
