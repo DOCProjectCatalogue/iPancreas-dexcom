@@ -2,7 +2,6 @@
 *.log
 *.pyc
 bloodhound.json
-device-data.json
 example-output.*
 example_output.*
 my_example.py
