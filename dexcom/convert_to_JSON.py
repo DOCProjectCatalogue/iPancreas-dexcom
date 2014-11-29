@@ -153,7 +153,7 @@ class DexcomJSON:
           if change['effective_at']['internal_time'] != '':
             dated_changes.append(change)
         self.offset_changes = dated_changes
-    except KeyError:
+    except (FileNotFoundError, KeyError, ValueError):
       self.offset_changes = []
 
   def sensors(self):
@@ -177,14 +177,16 @@ class DexcomJSON:
 
     if notstart:
       self.offset_changes.append({
+        'display_offset': offset,
         # timestamp of last (most recent) datum to which this offset is to be applied
         'effective_at': {
-          'internal_time': obj.internal_time,
-          'display_time': obj.user_time
+          'internal_time': parse_datetime(obj.internal_time).isoformat(),
+          'display_time': parse_datetime(obj.user_time).isoformat()
         },
-        'display_offset': offset,
-        'type': tz_res['type'],
-        'timezone': timezone
+        'reason': tz_res['type'],
+        'subtype': 'timezone offset',
+        'timezone': timezone,
+        'type': 'meta'
       })
 
     return (offset, timezone)
@@ -322,7 +324,7 @@ class DexcomJSON:
     with open('bloodhound.json', 'w') as f:
       sorted_changes = sorted(self.offset_changes, key=lambda x: x['effective_at']['internal_time'])
       sorted_changes.reverse()
-      print(json.dumps(sorted_changes, indent=2, separators=(',', ': ')), file=f)
+      print(json.dumps(sorted_changes, indent=2, separators=(',', ': '), sort_keys=True), file=f)
 
     return self
 
@@ -333,7 +335,7 @@ class DexcomJSON:
 \tDisplay offset from UTC = %d
 \tTimezone = %s
 \tType of change = %s\n""" %('(most recent)' if not change['effective_at']['internal_time'] else change['effective_at']['internal_time'],
-  change['effective_at']['display_time'], change['display_offset'], change['timezone'], change['type'])
+  change['effective_at']['display_time'], change['display_offset'], change['timezone'], change['reason'])
 
   def print_JSON(self):
     """Print as JSON to specified output file in specified format."""
@@ -344,6 +346,6 @@ class DexcomJSON:
     }[self.output['format']]
 
     with open(self.output['file'], 'w') as f:
-      print(json.dumps(to_print, separators=(',', ': '), indent=2), file=f)
+      print(json.dumps(to_print, separators=(',', ': '), indent=2, sort_keys=True), file=f)
 
     return self
