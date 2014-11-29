@@ -195,7 +195,7 @@ class DexcomJSON:
     """Retrieve the correct offset change from the internal time effective at."""
 
     for change in self.offset_changes:
-      if change['effective_at']['internal_time'] == effective_at:
+      if change['effective_at']['internal_time'] == parse_datetime(effective_at).isoformat():
         return change
 
   def _get_timezone(self, obj, change_type):
@@ -275,7 +275,7 @@ class DexcomJSON:
     current_effective_at = ''
 
     for obj in self.all:
-      if obj.internal_time in effective_ats:
+      if parse_datetime(obj.internal_time).isoformat() in effective_ats:
         current_effective_at = obj.internal_time
         change = self._get_offset_change(obj.internal_time)
         offsets = (change['display_offset'], change['timezone'])
