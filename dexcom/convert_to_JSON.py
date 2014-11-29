@@ -29,7 +29,7 @@ class DexcomTZ(tzinfo):
     return self.__offset
 
 def datetime_difference(d1, d2):
-  """Return the different between two datetimes."""
+  """Return the difference between two datetimes."""
 
   return d2 - d1
 
@@ -84,7 +84,7 @@ class Dexcom:
         return 401
 
   def as_iPancreas(self):
-    """Return a dict of the object conforming to Tidepool's data model."""
+    """Return a dict of the object conforming to the iPancreas data model."""
 
     return {
       'id': str(uuid.uuid4()),
@@ -93,6 +93,7 @@ class Dexcom:
       'timezone': self.timezone,
       'trueUtcTime': self.utc_time,
       'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
+      'subtype': self.subtype,
       'value': self.value
     }
 
@@ -133,7 +134,7 @@ class DexcomJSON:
 
     reader = csv.reader(csv_file)
     # skip the header
-    reader.next()
+    next(reader)
     self.all = []
     for row in reader:
       self.all += self._parse_row(row)
@@ -143,7 +144,16 @@ class DexcomJSON:
 
     self.offsets = {'SevenPlus': 0}
 
-    self.offset_changes = []
+    try:
+      with open(output_opts['bloodhound'], 'rU') as f:
+        changes = json.load(f)
+        dated_changes = []
+        for change in changes:
+          if change['effective_at']['internal_time'] != '':
+            dated_changes.append(change)
+        self.offset_changes = dated_changes
+    except KeyError:
+      self.offset_changes = []
 
   def sensors(self):
     """Return all and only sensor readings."""
@@ -155,27 +165,35 @@ class DexcomJSON:
 
     return [i for i in self.all if i.subtype == 'calibration']
 
-  def _add_offset_change(self, diff_in_hours, obj, change_type, start = False):
+  def _add_offset_change(self, diff_in_hours, obj, change_type, notstart = False):
     """Add a timezone change to the list."""
 
-    offsets = self._get_timezone(obj, change_type)
-    offset = offsets[1] - diff_in_hours
-    timezone = offsets[0]
-    change_type = offsets[2]
-    if offset is None:
+    tz_res = self._get_timezone(obj, change_type)
+    offset = tz_res['offset']
+    timezone = tz_res['timezone']
+    if tz_res['offset'] is None:
       return
 
-    self.offset_changes.append({
-      # timestamp of last (most recent) datum to which this offset is to be applied
-      'internal_time': obj.internal_time if start else '',
-      'display_time': obj.user_time,
-      'display_offset': diff_in_hours + offset,
-      'internal_offset': offset,
-      'type': change_type,
-      'timezone': timezone
-    })
+    if notstart:
+      self.offset_changes.append({
+        # timestamp of last (most recent) datum to which this offset is to be applied
+        'effective_at': {
+          'internal_time': obj.internal_time,
+          'display_time': obj.user_time
+        },
+        'display_offset': offset,
+        'type': tz_res['type'],
+        'timezone': timezone
+      })
 
-    return (offset, diff_in_hours + offset, timezone)
+    return (offset, timezone)
+
+  def _get_offset_change(self, effective_at):
+    """Retrieve the correct offset change from the internal time effective at."""
+
+    for change in self.offset_changes:
+      if change['effective_at']['internal_time'] == effective_at:
+        return change
 
   def _get_timezone(self, obj, change_type):
     """Ask the user to input an offset for a particular Dexcom G4 Platinum CGM device."""
@@ -196,7 +214,11 @@ class DexcomJSON:
 
     print('Offset from UTC is %d.' %offset)
     print()
-    return (timezone, offset, change_type)
+    return {
+      'timezone': timezone,
+      'offset': offset,
+      'type': change_type
+    }
 
   def _parse_row(self, row):
     """Parse a CSV row into DexcomSensor and DexcomCalibration readings as appropriate."""
@@ -246,42 +268,48 @@ class DexcomJSON:
 
     initial_difference = ''
 
+    effective_ats = [offset['effective_at']['internal_time'] for offset in self.offset_changes]
+    current_effective_at = ''
+
     for obj in self.all:
-      user_time = parse_datetime(obj.user_time)
-      internal_time = parse_datetime(obj.internal_time)
+      if obj.internal_time in effective_ats:
+        current_effective_at = obj.internal_time
+        change = self._get_offset_change(obj.internal_time)
+        offsets = (change['display_offset'], change['timezone'])
+      elif obj.internal_time < current_effective_at:
+        change = self._get_offset_change(current_effective_at)
+        offsets = (change['display_offset'], change['timezone'])
+      else:
+        user_time = parse_datetime(obj.user_time)
+        internal_time = parse_datetime(obj.internal_time)
 
-      diff = {'timedelta': datetime_difference(user_time, internal_time)}
+        diff = {'timedelta': datetime_difference(user_time, internal_time)}
 
-      diff['hours'] = -diff['timedelta'].seconds/SECONDS_IN_HOUR
-      # round up to nearest hour if within sixty seconds of an hour
-      if diff['timedelta'].seconds % SECONDS_IN_HOUR < SECONDS_IN_HOUR/2:
-        diff['hours'] += 1
+        diff['hours'] = round(-diff['timedelta'].seconds/SECONDS_IN_HOUR)
 
-      # bootstrap from most recent data known timezone and difference to internal timestamp offset from UTC
-      if not initial_difference:
-        offsets = self._add_offset_change(diff['hours'], obj, 'input by user')
-        initial_difference = diff
-        current_difference = initial_difference
-      # offset from UTC of internal timestamps isn't consistent across G4 receivers
-      elif obj.serial != last_obj.serial and obj.device_gen == 'G4Platinum':
-        offsets = self._add_offset_change(diff['hours'], obj, 'changed G4 Platinum device', True)
-        current_difference = diff
-      # offset from UTC of internal timestamps isn't consistent across device generations
-      elif obj.device_gen != last_obj.device_gen:
-        offsets = self._add_offset_change(diff['hours'], obj, 'changed to Seven Plus device', True)
-        current_difference = diff
-      # and sometimes the user actually changed the device's settings
-      # fancy that!
-      elif diff['hours'] != current_difference['hours'] \
-          and abs(diff['timedelta'].seconds - current_difference['timedelta'].seconds) > 60:
-        offsets = self._add_offset_change(diff['hours'], obj, 'inferred via bloodhound protocol', True)
-        current_difference = diff
+        # bootstrap from most recent data known timezone and difference to internal timestamp offset from UTC
+        if not initial_difference:
+          offsets = self._add_offset_change(diff['hours'], obj, 'input by user')
+          initial_difference = diff
+          current_difference = initial_difference
+        # offset from UTC of internal timestamps isn't consistent across G4 receivers
+        elif obj.serial != last_obj.serial and obj.device_gen == 'G4Platinum':
+          offsets = self._add_offset_change(diff['hours'], obj, 'changed G4 Platinum device', True)
+          current_difference = diff
+        # offset from UTC of internal timestamps isn't consistent across device generations
+        elif obj.device_gen != last_obj.device_gen:
+          offsets = self._add_offset_change(diff['hours'], obj, 'changed to Seven Plus device', True)
+          current_difference = diff
+        # and sometimes the user actually changed the device's settings
+        # fancy that!
+        elif diff['hours'] != current_difference['hours']:
+          offsets = self._add_offset_change(diff['hours'], obj, 'inferred via bloodhound protocol', True)
+          current_difference = diff
 
       # add offsets to Dexcom object
       if offsets:
-        obj.internal_offset = offsets[0]
-        obj.display_offset = offsets[1]
-        obj.timezone = offsets[2]
+        obj.display_offset = offsets[0]
+        obj.timezone = offsets[1]
         # make each Dexcom object timezone-aware
         enlighten_datetime(obj)
 
@@ -290,6 +318,11 @@ class DexcomJSON:
     with open('bloodhound.log', 'w') as f:
       [print(self._printable_timezone_change(change), file=f) for change in self.offset_changes]
 
+    with open('bloodhound.json', 'w') as f:
+      sorted_changes = sorted(self.offset_changes, key=lambda x: x['effective_at']['internal_time'])
+      sorted_changes.reverse()
+      print(json.dumps(sorted_changes, indent=2, separators=(',', ': ')), file=f)
+
     return self
 
   def _printable_timezone_change(self, change):
@@ -297,10 +330,9 @@ class DexcomJSON:
 
     return """Offset effective at internal time %s, display time %s:
 \tDisplay offset from UTC = %d
-\tInternal offset from UTC = %d
 \tTimezone = %s
-\tType of change = %s\n""" %('(most recent)' if not change['internal_time'] else change['internal_time'],
-  change['display_time'], change['display_offset'], change['internal_offset'], change['timezone'], change['type'])
+\tType of change = %s\n""" %('(most recent)' if not change['effective_at']['internal_time'] else change['effective_at']['internal_time'],
+  change['effective_at']['display_time'], change['display_offset'], change['timezone'], change['type'])
 
   def print_JSON(self):
     """Print as JSON to specified output file in specified format."""

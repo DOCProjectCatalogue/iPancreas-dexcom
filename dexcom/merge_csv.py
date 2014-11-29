@@ -60,7 +60,7 @@ class DexcomSet:
     with open(this_file['file'], 'rU') as f:
       rdr = csv.reader(f, delimiter='\t')
       # exclude header
-      rdr.next()
+      next(rdr)
       for row in rdr:
         # sniff out serial number, which occurs in column to the right of label 'SerialNumber'
         if row[0] == 'SerialNumber':
@@ -134,9 +134,9 @@ class DexcomSet:
 def get_header(this_file):
   """Get the header of a Dexcom file."""
 
-  with open(this_file, 'rU') as f:
+  with open(this_file, 'rU', newline='') as f:
     rdr = csv.reader(f, delimiter='\t')
-    return rdr.next()
+    return next(rdr)
 
 def get_file_list(path = ""):
   """Get the list of files with .csv or .txt extensions in the target directory."""
