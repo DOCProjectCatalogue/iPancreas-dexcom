@@ -20,6 +20,8 @@ DEX_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 SECONDS_IN_HOUR = 3600
 
+GLUCOSE_MOLAR_MASS = 18.01559
+
 class DexcomTZ(tzinfo):
 
   def __init__(self, offset):
@@ -83,30 +85,32 @@ class Dexcom:
       elif value == 'High':
         return 401
 
-  def as_iPancreas(self):
-    """Return a dict of the object conforming to the iPancreas data model."""
+  def _convert_mgdl_to_mmoll(self, value):
+    """Convert a blood glucose value given in mg/dL to mmol/L."""
 
-    return {
-      'id': str(uuid.uuid4()),
-      'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
-      'offsetTime': self.display_time,
-      'source': 'dexcom',
-      'subtype': self.subtype,
-      'timezone': self.timezone,
-      'trueUtcTime': self.utc_time,
-      'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
-      'value': self.value
-    }
+    return float(value/GLUCOSE_MOLAR_MASS)
 
   def as_tidepool(self):
     """Return a dict of the object conforming to Tidepool's data model."""
 
-    return {
-      'id': str(uuid.uuid4()),
-      'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
-      'type': 'cbg' if self.subtype == 'sensor' else 'smbg',
-      'value': self.value
-    }
+    tidepool_obj = {
+        'deviceId': self.device_gen + '-=-' + self.serial,
+        'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
+        'deviceValue': str(self.value),
+        'id': str(uuid.uuid4()),
+        'source': 'dexcom',
+        'time': self.display_time,
+        'timezone': self.timezone,
+        'units': 'mg/dL',
+        'value': self._convert_mgdl_to_mmoll(self.value)
+      }
+    if self.subtype == 'sensor':
+      tidepool_obj['type'] = 'cbg'
+    elif self.subtype == 'calibration':
+      tidepool_obj['type'] = 'deviceMeta'
+      tidepool_obj['subType'] = 'calibration'
+
+    return tidepool_obj
 
 class DexcomSensor(Dexcom):
   """iPancreas Dexcom data model for sensor readings."""
@@ -341,8 +345,7 @@ class DexcomJSON:
     """Print as JSON to specified output file in specified format."""
 
     to_print = {
-      'tidepool': [obj.as_tidepool() for obj in self.all],
-      'iPancreas': [obj.as_iPancreas() for obj in self.all]
+      'tidepool': [obj.as_tidepool() for obj in self.all]
     }[self.output['format']]
 
     with open(self.output['file'], 'w') as f:
