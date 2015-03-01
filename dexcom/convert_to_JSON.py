@@ -36,11 +36,9 @@ def datetime_difference(d1, d2):
   return d2 - d1
 
 def enlighten_datetime(obj):
-  """Make a Dexcom object timezone-aware with utc_time and display_time attributes."""
+  """Make a Dexcom object timezone-aware on its `time` attribute."""
 
-  obj.display_time = parse_datetime(obj.user_time).replace(tzinfo=DexcomTZ(obj.display_offset)).isoformat()
-  current_tz = tz(obj.timezone)
-  obj.utc_time = current_tz.localize(parse_datetime(obj.user_time)).astimezone(pytz.utc).isoformat()
+  obj.time = parse_datetime(obj.user_time).replace(tzinfo=DexcomTZ(obj.display_offset)).isoformat()
 
 def parse_datetime(dt_str):
   """Parse a Dexcom time and date string into a datetime object."""
@@ -67,8 +65,7 @@ class Dexcom:
     self.type = 'bg'
 
     # set by enlighten_datetime, if bloodhound protocol succeeds
-    self.utc_time = ''
-    self.display_time = ''
+    self.time = ''
 
   def _set_value(self, value):
     """Return the integer value for each possible Dexcom sensor reading."""
@@ -76,13 +73,24 @@ class Dexcom:
       value = int(value)
       # calibrations can go below 40 and over 400
       if value >= 20 and value <= 600:
+        self.annotations = None
         return value
       else:
         raise Exception('Dexcom value out of range:', value)
     except ValueError:
       if value == 'Low':
+        self.annotations = [{
+          'code': 'bg/out-of-range',
+          'threshold': 40,
+          'value': 'low'
+        }]
         return 39
       elif value == 'High':
+        self.annotations = [{
+          'code': 'bg/out-of-range',
+          'threshold': 400,
+          'value': 'high'
+        }]
         return 401
 
   def _convert_mgdl_to_mmoll(self, value):
@@ -99,8 +107,7 @@ class Dexcom:
         'deviceValue': str(self.value),
         'id': str(uuid.uuid4()),
         'source': 'dexcom',
-        'time': self.display_time,
-        'timezone': self.timezone,
+        'time': self.time,
         'units': 'mg/dL',
         'value': self._convert_mgdl_to_mmoll(self.value)
       }
@@ -109,6 +116,8 @@ class Dexcom:
     elif self.subtype == 'calibration':
       tidepool_obj['type'] = 'deviceMeta'
       tidepool_obj['subType'] = 'calibration'
+    if self.annotations != None:
+      tidepool_obj['annotations'] = self.annotations
 
     return tidepool_obj
 
