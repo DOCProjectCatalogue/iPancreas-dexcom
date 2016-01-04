@@ -5,7 +5,7 @@ Utilities for data from a Dexcom continuous glucose monitor.
 
 ### About
 
-This is the repository where I'm moving all my utilities (previously found in my repository now known as [iPancreas-archive](https://github.com/jebeck/iPancreas-archive)) for dealing with the data from a Dexcom continuous glucose monitor. The eventual goal is a Python module (located in `dexcom/`) containing everything I use to read, munge, and analyze my own Dexcom data, from soup to nuts (i.e., from reading the raw Dexcom Studio output to final JSON). Perhaps I'll even add the package to `pip` eventually...
+This is the repository where I'm moving all my utilities (previously found in my repository now known as [iPancreas-archive](https://github.com/jebeck/iPancreas-archive)) for dealing with the data from a Dexcom continuous glucose monitor. The eventual goal is a Python module (located in `dexcom/`) containing everything I use to read, munge, and analyze my own Dexcom data, from soup to nuts (i.e., from reading the raw Dexcom Studio output to final JSON).
 
 As of August 3rd, 2014, I have reimplemented iPancreas-archive's `dexcom_to_JSON.py` tool as `convert_to_JSON.py`, now including interactive tooling for specifiying the timezone associated with segments of a dataset (whenever the date and time settings on the device appear to have changed).
 
