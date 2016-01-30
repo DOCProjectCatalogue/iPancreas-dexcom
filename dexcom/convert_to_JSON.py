@@ -102,19 +102,27 @@ class Dexcom:
     """Return a dict of the object conforming to Tidepool's data model."""
 
     tidepool_obj = {
+        'clockDriftOffset': 0,
+        'conversionOffset': 0,
         'deviceId': self.device_gen + '-=-' + self.serial,
         'deviceTime': parse_datetime(self.user_time).strftime('%Y-%m-%dT%H:%M:%S'),
-        'deviceValue': str(self.value),
-        'id': str(uuid.uuid4()),
-        'source': 'dexcom',
+        'guid': str(uuid.uuid4()),
         'time': self.time,
-        'units': 'mg/dL',
-        'value': self._convert_mgdl_to_mmoll(self.value)
+        'timezoneOffset': int(self.display_offset * 60),
+        'units': 'mmol/L',
+        'value': self._convert_mgdl_to_mmoll(self.value),
+        'payload': {
+          'deviceGen': self.device_gen,
+          'deviceSerial': self.serial,
+          'deviceValue': str(self.value),
+          'internalTime': self.internal_time.replace(' ', 'T'),
+          'timezone': self.timezone
+        }
       }
     if self.subtype == 'sensor':
       tidepool_obj['type'] = 'cbg'
     elif self.subtype == 'calibration':
-      tidepool_obj['type'] = 'deviceMeta'
+      tidepool_obj['type'] = 'deviceEvent'
       tidepool_obj['subType'] = 'calibration'
     if self.annotations != None:
       tidepool_obj['annotations'] = self.annotations
